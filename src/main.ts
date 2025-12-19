@@ -12,6 +12,12 @@ import { createStructureRepresentationParams } from 'molstar/lib/mol-plugin-stat
 import { MolScriptBuilder as MS, MolScriptBuilder } from 'molstar/lib/mol-script/language/builder';
 
 
+/** 
+ * Highlights input residue positions with spheres of specified color.
+ * @param plugin - The Mol* plugin context.
+ * @param positions - Array of residue positions (numbers) to highlight.
+ * @param colorHex - Hex color string for the spheres (default: red).
+ */
 
 export async function highlightResidueWithSphere(
   plugin: PluginContext,
@@ -21,7 +27,7 @@ export async function highlightResidueWithSphere(
 
 
 
-    // --- Normalize / flatten incoming positions to a plain number[] ---
+    // Flattens nested arrays
     const flatten = (arr: any): any[] => {
       if (!Array.isArray(arr)) return [arr];
       return arr.reduce((acc: any[], v: any) => {
@@ -38,7 +44,7 @@ export async function highlightResidueWithSphere(
       })
       .filter((n: number | null): n is number => n !== null);
 
-    // remove duplicates and sort (optional)
+    // remove duplicates 
     const uniquePos = Array.from(new Set(posNums)).sort((a, b) => a - b);
 
     console.log('cleaned integer positions:', uniquePos);
@@ -47,7 +53,7 @@ export async function highlightResidueWithSphere(
       return;
     }
 
-
+    // Checks if colorHex is valid 
     const hex = colorHex.startsWith("#") ? colorHex.slice(1) : colorHex;
     const colorValue = parseInt(hex, 16);
     if (isNaN(colorValue)) {
@@ -57,8 +63,8 @@ export async function highlightResidueWithSphere(
 
   const structCell = plugin.managers.structure.hierarchy.current.structures[0];
 
+// Selects the structure and prepares to build highlight
 const b = plugin.build()
-//   .delete('mutations')
   .to(structCell.cell);
 
 const group = b.apply(
@@ -67,9 +73,8 @@ const group = b.apply(
     { ref: 'mutations' }
   );
 
-  console.log("DddD")
 
-
+// Molstar query expression to select specified residues' CA atoms in chain A
 const expression = MS.struct.generator.atomGroups({
     'chain-test': MS.core.rel.eq(
       [ MS.struct.atomProperty.macromolecular.label_asym_id(), 'A' ]
@@ -83,10 +88,7 @@ const expression = MS.struct.generator.atomGroups({
     )
   });
 
-    console.log(`Will highlight ${expression} CA atoms at positions`, uniquePos);
-
-//   console.log('Builder steps:', b.getTree()); 
-
+  // apply representation to the selected residues
     group
     .apply(
       StateTransforms.Model.StructureSelectionFromExpression,
@@ -108,7 +110,7 @@ const expression = MS.struct.generator.atomGroups({
       { tags: ['mutations-group'] }
     );
 
-  // 5) finally commit all the changes
+  //commit all the changes
   await b.commit();
 }
 
@@ -226,27 +228,6 @@ window.Shiny?.addCustomMessageHandler(
 )
 
 
-
-window.Shiny?.addCustomMessageHandler("toggleFullScreen", () => {
-  console.log("toggleFullScreen handler called!");
-
-  const container = document.getElementById("molstar-parent")!;
-  if (!document.fullscreenElement) {
-    // enter full‑screen
-    container.requestFullscreen().catch(err => {
-      console.warn("Fullscreen failed:", err);
-    });
-  } else {
-    // exit full‑screen
-    document.exitFullscreen().catch(err => {
-      console.warn("Exit fullscreen failed:", err);
-    });
-  }
-});
-
-
-
-
 // Initializes the Mol* plugin and loads proteins based on UniProt ID 
 async function initMolstar(uniprot_id:string) {
     // Run once to initialize the viewer
@@ -263,11 +244,12 @@ async function initMolstar(uniprot_id:string) {
       return;
     }  
 
+    // Subscribe to hover events to send residue info back to Shiny
       plugin.behaviors.interaction.hover.subscribe(e => {
         const loci = e.current.loci;
         if (!StructureElement.Loci.is(loci) || loci.elements.length === 0) return;
 
-        const info = getResidueInfo(loci); // change below to return object (see next)
+        const info = getResidueInfo(loci);
         if (!info) return;
 
         const ns = (window as any).MY_MODULE_NS as string; // your module prefix
@@ -313,14 +295,7 @@ await plugin.build()
     colorTheme: { name: 'uniform', params: { value: Color(0xbebebe) } }
   }, { ref: cartoonRef })
   .commit();
-  // Highlight residue 200 in red
-  // await highlightDomains(plugin, 200, 300);
 
-
-  // setTimeout(() => {
-  //     plugin.managers.camera.reset();
-  //     console.log('Camera reset after protein loading completed');
-  //   }, 500); // 500ms delay should be enough
   plugin.managers.camera.reset();
     console.log('initMolstar completed for', uniprot_id);
 
@@ -333,7 +308,7 @@ await plugin.build()
 }
 
 
-
+// Clears all overpaint layers and mutations from the structure
 async function clearOverlays(plugin: PluginContext) {
   // gets rid of cache
   overpaintLayers.length = 0;
@@ -352,7 +327,7 @@ async function clearOverlays(plugin: PluginContext) {
   console.log('Overpaint layers cleared');
 }
 
-
+// Clears only the overpaint layers from the structure
 async function clearPaint(plugin: PluginContext) {
   overpaintLayers.length = 0;
 
@@ -372,7 +347,7 @@ async function clearSpheres(plugin:PluginContext) {
 
 
 
-
+// Highlights specified residue range with given color
 async function highlightDomains(
     plugin: PluginContext,
     residueStart: number,
@@ -418,7 +393,7 @@ async function highlightDomains(
 
 }
 
-
+// Extracts residue information from hovered loci
 function getResidueInfo(loci: any): { aa: string, num: number, label: string } | undefined {
   if (!StructureElement.Loci.is(loci) || !loci.elements || loci.elements.length === 0) return;
 
@@ -441,6 +416,7 @@ function getResidueInfo(loci: any): { aa: string, num: number, label: string } |
 }
 
 
+// Zooms camera to focus on specified residue in given chain
 export async function zoomToResidue(
   plugin: PluginContext,
   residueNumber: number,
