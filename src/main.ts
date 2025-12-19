@@ -201,16 +201,6 @@ window.Shiny?.addCustomMessageHandler(
   }
 );
 
-window.Shiny?.addCustomMessageHandler(
-  "clearSpheres",
-  (_msg: any) => {
-    if (!plugin) {
-      console.warn("Mol* plugin not ready cannot clear overlays");
-      return;
-    }
-    clearSpheres(plugin);
-  }
-)
 
 window.Shiny?.addCustomMessageHandler(
   "resetCamera",
@@ -462,7 +452,7 @@ export async function zoomToResidue(
     return;
   }
 
-  // Query for the specific residue using the same pattern as your highlightDomains function
+  // Query for the specific residue using the same pattern as highlightDomains function
   const query = atoms({
     chainTest: ctx => {
       const chain = StructureProperties.chain.label_asym_id(ctx.element);
