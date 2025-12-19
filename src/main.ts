@@ -8,6 +8,109 @@ import { atoms } from 'molstar/lib/mol-model/structure/query/queries/generators'
 import { StructureProperties } from 'molstar/lib/mol-model/structure';
 import { QueryContext } from 'molstar/lib/mol-model/structure/query/context';
 import { OrderedSet } from 'molstar/lib/mol-data/int';
+import { createStructureRepresentationParams } from 'molstar/lib/mol-plugin-state/helpers/structure-representation-params';
+import { MolScriptBuilder as MS, MolScriptBuilder } from 'molstar/lib/mol-script/language/builder';
+
+
+
+export async function highlightResidueWithSphere(
+  plugin: PluginContext,
+  positions: number[],
+  colorHex: string = '#ff0000',
+) {
+
+
+
+    // --- Normalize / flatten incoming positions to a plain number[] ---
+    const flatten = (arr: any): any[] => {
+      if (!Array.isArray(arr)) return [arr];
+      return arr.reduce((acc: any[], v: any) => {
+        if (Array.isArray(v)) return acc.concat(flatten(v));
+        return acc.concat(v);
+      }, []);
+    };
+
+    const rawFlat = flatten(positions);
+    const posNums = rawFlat
+      .map((p: any) => {
+        const n = Number(p);
+        return Number.isFinite(n) ? Math.floor(n) : null;
+      })
+      .filter((n: number | null): n is number => n !== null);
+
+    // remove duplicates and sort (optional)
+    const uniquePos = Array.from(new Set(posNums)).sort((a, b) => a - b);
+
+    console.log('cleaned integer positions:', uniquePos);
+    if (uniquePos.length === 0) {
+      console.warn('No valid positions after cleaning; aborting highlight.');
+      return;
+    }
+
+
+    const hex = colorHex.startsWith("#") ? colorHex.slice(1) : colorHex;
+    const colorValue = parseInt(hex, 16);
+    if (isNaN(colorValue)) {
+        console.warn("Invalid color:", colorHex);
+        return;
+    }
+
+  const structCell = plugin.managers.structure.hierarchy.current.structures[0];
+
+const b = plugin.build()
+//   .delete('mutations')
+  .to(structCell.cell);
+
+const group = b.apply(
+    StateTransforms.Misc.CreateGroup,
+    { label: 'mutations' },
+    { ref: 'mutations' }
+  );
+
+  console.log("DddD")
+
+
+const expression = MS.struct.generator.atomGroups({
+    'chain-test': MS.core.rel.eq(
+      [ MS.struct.atomProperty.macromolecular.label_asym_id(), 'A' ]
+    ),
+    'residue-test': MS.core.set.has([
+      MS.set(...uniquePos),
+      MS.struct.atomProperty.macromolecular.label_seq_id()
+    ]),
+    'atom-test': MS.core.rel.eq(
+      [ MS.struct.atomProperty.macromolecular.label_atom_id(), 'CA' ]
+    )
+  });
+
+    console.log(`Will highlight ${expression} CA atoms at positions`, uniquePos);
+
+//   console.log('Builder steps:', b.getTree()); 
+
+    group
+    .apply(
+      StateTransforms.Model.StructureSelectionFromExpression,
+      { expression }
+    )
+    .apply(
+      StateTransforms.Representation.StructureRepresentation3D,
+      createStructureRepresentationParams(
+        plugin,
+        structCell.cell.obj.data,  // data object
+        {
+          type: 'ball-and-stick',
+          color: 'uniform',
+          colorParams: { value: Color(colorValue) },
+          size: 'uniform',
+          sizeParams: { value: 10 }
+        }
+      ),
+      { tags: ['mutations-group'] }
+    );
+
+  // 5) finally commit all the changes
+  await b.commit();
+}
 
 
 // Defining Shiny as a global object to allow communication from R Shiny
@@ -61,6 +164,98 @@ window.Shiny?.addCustomMessageHandler(
 );
 
 
+window.Shiny?.addCustomMessageHandler(
+    "highlightResidueWithSphere", 
+    (msg: { positions: number; colorHex?: string }) => {
+        if (!plugin) return console.warn("Mol* not reaady");
+        highlightResidueWithSphere(
+            plugin,
+            [msg.positions],
+            msg.colorHex ?? '#ff0000'
+        );
+    }
+);
+
+
+window.Shiny?.addCustomMessageHandler(
+  "zoomToResidue",
+  (msg: {residueNumber: number; chainId?: string}) => {
+    if (!plugin) return console.warn("Mol* not ready");
+    zoomToResidue(
+      plugin,
+      msg.residueNumber,
+      msg.chainId ?? 'A' 
+       );
+  }
+);
+
+
+window.Shiny?.addCustomMessageHandler(
+  "clearOverlays",
+  (_msg: any) => {
+    if (!plugin) {
+      console.warn("Mol* plugin not ready cannot clear overlays");
+      return;
+    }
+    clearOverlays(plugin);
+  }
+);
+
+window.Shiny?.addCustomMessageHandler(
+  "clearSpheres",
+  (_msg: any) => {
+    if (!plugin) {
+      console.warn("Mol* plugin not ready cannot clear overlays");
+      return;
+    }
+    clearSpheres(plugin);
+  }
+)
+
+window.Shiny?.addCustomMessageHandler(
+  "resetCamera",
+  (_msg: any) => {
+    if (!plugin) {
+      console.warn("Mol* plugin not ready cannot reset camera");
+      return;
+    }
+    resetCamera(plugin);
+  }
+);
+
+
+window.Shiny?.addCustomMessageHandler(
+  "clearPaint",
+  (_msg: any) => {
+    if (!plugin) {
+      console.warn("Mol* plugin not ready cannot clear overlays");
+      return;
+    }
+    clearPaint(plugin);
+  }
+)
+
+
+
+window.Shiny?.addCustomMessageHandler("toggleFullScreen", () => {
+  console.log("toggleFullScreen handler called!");
+
+  const container = document.getElementById("molstar-parent")!;
+  if (!document.fullscreenElement) {
+    // enter full‑screen
+    container.requestFullscreen().catch(err => {
+      console.warn("Fullscreen failed:", err);
+    });
+  } else {
+    // exit full‑screen
+    document.exitFullscreen().catch(err => {
+      console.warn("Exit fullscreen failed:", err);
+    });
+  }
+});
+
+
+
 
 // Initializes the Mol* plugin and loads proteins based on UniProt ID 
 async function initMolstar(uniprot_id:string) {
@@ -76,18 +271,22 @@ async function initMolstar(uniprot_id:string) {
     if (!ok) {
       console.error('Mol* viewer failed to initialize.');
       return;
-    }
+    }  
 
-    plugin.behaviors.interaction.hover.subscribe(e => {
+      plugin.behaviors.interaction.hover.subscribe(e => {
         const loci = e.current.loci;
+        if (!StructureElement.Loci.is(loci) || loci.elements.length === 0) return;
 
-        if (loci.kind === 'element-loci') {
-            const label = getResidueInfo(loci);
-            if (label) {
-                window.Shiny!.setInputValue('hoveredResidue', label, { priority: 'event' });
-            }
-        }
-    }); 
+        const info = getResidueInfo(loci); // change below to return object (see next)
+        if (!info) return;
+
+        const ns = (window as any).MY_MODULE_NS as string; // your module prefix
+        // namespaced inputs: 'resi_aa' and 'resi_num'
+        window.Shiny!.setInputValue(ns + 'resi_aa', info.aa, { priority: 'event' });
+        window.Shiny!.setInputValue(ns + 'resi_num', info.num, { priority: 'event' });
+        // (optionally keep the combined string too)
+        window.Shiny!.setInputValue(ns + 'resiinfo', info.label, { priority: 'event' });
+      });
 
 
     // expose for debugging
@@ -99,9 +298,8 @@ async function initMolstar(uniprot_id:string) {
   overpaintLayers.length = 0
 
   const data = await plugin.builders.data.download({
-    url: 'https://alphafold.ebi.ac.uk/files/AF-'+uniprot_id+'-F1-model_v4.pdb'
+    url: 'https://alphafold.ebi.ac.uk/files/AF-'+uniprot_id+'-F1-model_v6.pdb'
   }, { state: { isGhost: true } });
-
   const trajectory = await plugin.builders.structure.parseTrajectory(data, 'pdb');
   const structure = await plugin.builders.structure.createModel(trajectory);
 
@@ -114,6 +312,7 @@ async function initMolstar(uniprot_id:string) {
   if (!polymer) {
     console.warn('No polymer component found');
     return;
+
   }
 
   // Add cartoon representation with uniform grey color 
@@ -125,7 +324,15 @@ await plugin.build()
   }, { ref: cartoonRef })
   .commit();
   // Highlight residue 200 in red
-  await highlightDomains(plugin, 200, 300);
+  // await highlightDomains(plugin, 200, 300);
+
+
+  // setTimeout(() => {
+  //     plugin.managers.camera.reset();
+  //     console.log('Camera reset after protein loading completed');
+  //   }, 500); // 500ms delay should be enough
+  plugin.managers.camera.reset();
+    console.log('initMolstar completed for', uniprot_id);
 
   console.log('Checking window.Shiny:');
 
@@ -134,6 +341,45 @@ await plugin.build()
   // Optional: expose plugin for debugging
   (window as any).plugin = plugin;
 }
+
+
+
+async function clearOverlays(plugin: PluginContext) {
+  // gets rid of cache
+  overpaintLayers.length = 0;
+
+  // transforms the protein to become blank
+  await plugin.build()
+    .to(cartoonRef)
+    .apply(StateTransforms.Representation.OverpaintStructureRepresentation3DFromBundle, {
+      layers: [],    // no layers = remove all overpaints
+    })
+    .commit();
+
+  plugin.build().delete('mutations').commit();
+  
+
+  console.log('Overpaint layers cleared');
+}
+
+
+async function clearPaint(plugin: PluginContext) {
+  overpaintLayers.length = 0;
+
+  // transforms the protein to become blank
+  await plugin.build()
+    .to(cartoonRef)
+    .apply(StateTransforms.Representation.OverpaintStructureRepresentation3DFromBundle, {
+      layers: [],    // no layers = remove all overpaints
+    })
+    .commit();
+  
+}
+
+async function clearSpheres(plugin:PluginContext) {
+  plugin.build().delete('mutations').commit();
+}
+
 
 
 
@@ -183,26 +429,78 @@ async function highlightDomains(
 }
 
 
-function getResidueInfo(loci: any): string | undefined {
-    // must be a structure‑element loci
-    if (!StructureElement.Loci.is(loci) || loci.elements.length === 0) return;
+function getResidueInfo(loci: any): { aa: string, num: number, label: string } | undefined {
+  if (!StructureElement.Loci.is(loci) || !loci.elements || loci.elements.length === 0) return;
 
-    const e  = loci.elements[0];
-    const unit = e.unit;
-    const idx = OrderedSet.start(e.indices);        // <-- take 1st atom in the residue
+  const e = loci.elements[0];
+  if (!e.unit) return;
+  const unit = e.unit;
+  const localIndex = OrderedSet.start(e.indices);
+  if (localIndex == null) return;
+  const atomIndex = unit.elements[localIndex];
+  if (atomIndex == null) return;
 
-    const model = unit.model;
-    const residueIndex = model.atomicHierarchy.residueAtomSegments.index[idx];
+  const model = unit.model;
+  const residueIndex = model.atomicHierarchy.residueAtomSegments.index[atomIndex];
 
-    const compId = model.atomicHierarchy.atoms.label_comp_id.value(idx);          // e.g. “GLY”
-    const seqId  = model.atomicHierarchy.residues.label_seq_id.value(residueIndex); // e.g. 104
+  const compId = model.atomicHierarchy.atoms.label_comp_id.value[atomIndex] ??
+                 model.atomicHierarchy.atoms.label_comp_id.value(atomIndex);
+  const seqId = model.atomicHierarchy.residues.label_seq_id.value(residueIndex);
 
-    return `${compId} ${seqId}`;
+  return { aa: String(compId), num: Number(seqId), label: `${compId} ${seqId}` };
 }
+
+
+export async function zoomToResidue(
+  plugin: PluginContext,
+  residueNumber: number,
+  chainId: string = 'A'
+) {
+  const structure = plugin.managers.structure.hierarchy.current.structures[0]?.cell.obj?.data;
+  if (!structure) {
+    console.warn('No structure loaded');
+    return;
+  }
+
+  // Query for the specific residue using the same pattern as your highlightDomains function
+  const query = atoms({
+    chainTest: ctx => {
+      const chain = StructureProperties.chain.label_asym_id(ctx.element);
+      return chain === chainId;
+    },
+    residueTest: ctx => {
+      const seqId = StructureProperties.residue.label_seq_id(ctx.element);
+      return seqId === residueNumber;
+    },
+  });
+
+  const selection = query(new QueryContext(structure));
+  const bundle = StructureElement.Bundle.fromSelection(selection);
+  
+  // Convert bundle to loci and focus camera
+  const loci = StructureElement.Bundle.toLoci(bundle, structure);
+  plugin.managers.camera.focusLoci(loci);
+  
+  console.log(`Zoomed to residue ${residueNumber} in chain ${chainId}`);
+  plugin.managers.interactivity.lociHighlights.highlight({ loci });
+
+}
+
+
+export async function resetCamera(plugin: PluginContext) {
+  // Reset camera to fit the entire structure
+  plugin.managers.camera.reset();
+  
+  console.log('Camera view reset to show entire structure');
+}
+
 
 // Exposes functions globally
 (window as any).initMolstar = initMolstar;
 (window as any).highlightDomains = highlightDomains;
+(window as any).clearOverlays = clearOverlays;
+(window as any).highlightResidueWithSphere = highlightResidueWithSphere;
+(window as any).zoomToResidue = zoomToResidue;
 
 // Automatically loads default protein onto webpage
 window.onload = () => {
