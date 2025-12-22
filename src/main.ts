@@ -227,6 +227,37 @@ window.Shiny?.addCustomMessageHandler(
   }
 )
 
+window.Shiny?.addCustomMessageHandler(
+  "clearSpheres",
+  (_msg: any) => {
+    if (!plugin) {
+      console.warn("Mol* plugin not ready cannot clear spheres");
+      return;
+    }
+    clearSpheres(plugin);
+  }
+);
+
+
+window.Shiny?.addCustomMessageHandler("toggleFullScreen", () => {
+  console.log("toggleFullScreen handler called!");
+
+  const container = document.getElementById("molstar-parent")!;
+  if (!document.fullscreenElement) {
+    // enter full‑screen
+    container.requestFullscreen().catch(err => {
+      console.warn("Fullscreen failed:", err);
+    });
+  } else {
+    // exit full‑screen
+    document.exitFullscreen().catch(err => {
+      console.warn("Exit fullscreen failed:", err);
+    });
+  }
+});
+
+
+
 
 // Initializes the Mol* plugin and loads proteins based on UniProt ID 
 async function initMolstar(uniprot_id:string) {
@@ -244,12 +275,11 @@ async function initMolstar(uniprot_id:string) {
       return;
     }  
 
-    // Subscribe to hover events to send residue info back to Shiny
       plugin.behaviors.interaction.hover.subscribe(e => {
         const loci = e.current.loci;
         if (!StructureElement.Loci.is(loci) || loci.elements.length === 0) return;
 
-        const info = getResidueInfo(loci);
+        const info = getResidueInfo(loci); // change below to return object (see next)
         if (!info) return;
 
         const ns = (window as any).MY_MODULE_NS as string; // your module prefix
@@ -308,7 +338,7 @@ await plugin.build()
 }
 
 
-// Clears all overpaint layers and mutations from the structure
+
 async function clearOverlays(plugin: PluginContext) {
   // gets rid of cache
   overpaintLayers.length = 0;
@@ -327,7 +357,7 @@ async function clearOverlays(plugin: PluginContext) {
   console.log('Overpaint layers cleared');
 }
 
-// Clears only the overpaint layers from the structure
+
 async function clearPaint(plugin: PluginContext) {
   overpaintLayers.length = 0;
 
@@ -341,13 +371,15 @@ async function clearPaint(plugin: PluginContext) {
   
 }
 
-async function clearSpheres(plugin:PluginContext) {
+export async function clearSpheres(plugin:PluginContext) {
+  console.log("clear spheres called");
+
   plugin.build().delete('mutations').commit();
 }
 
 
 
-// Highlights specified residue range with given color
+
 async function highlightDomains(
     plugin: PluginContext,
     residueStart: number,
@@ -393,7 +425,7 @@ async function highlightDomains(
 
 }
 
-// Extracts residue information from hovered loci
+
 function getResidueInfo(loci: any): { aa: string, num: number, label: string } | undefined {
   if (!StructureElement.Loci.is(loci) || !loci.elements || loci.elements.length === 0) return;
 
@@ -416,7 +448,6 @@ function getResidueInfo(loci: any): { aa: string, num: number, label: string } |
 }
 
 
-// Zooms camera to focus on specified residue in given chain
 export async function zoomToResidue(
   plugin: PluginContext,
   residueNumber: number,
@@ -467,7 +498,7 @@ export async function resetCamera(plugin: PluginContext) {
 (window as any).clearOverlays = clearOverlays;
 (window as any).highlightResidueWithSphere = highlightResidueWithSphere;
 (window as any).zoomToResidue = zoomToResidue;
-
+(window as any).clearSpheres = clearSpheres;
 // Automatically loads default protein onto webpage
 window.onload = () => {
   initMolstar('P37898');
